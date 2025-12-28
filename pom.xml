@@ -12,6 +12,7 @@
         <module>core</module>
         <module>beans</module>
         <module>context</module>
+        <module>commons</module>
     </modules>
 
     <properties>
