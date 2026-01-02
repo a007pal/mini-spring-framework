@@ -1,44 +1,94 @@
 package com.amit.beans.factory.support;
 
+import com.amit.core.annotation.Autowired;
 import com.amit.beans.definition.BeanDefinition;
 import com.amit.beans.factory.BeanFactory;
+import com.amit.beans.singleton.DefaultSingletonBeanRegistry;
 
 import java.lang.reflect.Constructor;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Objects;
+import java.lang.reflect.Field;
+import java.util.*;
 
 
 public class DefaultBeanFactory implements BeanFactory {
 
-    private final Map<Class<?>, BeanDefinition> beanDefinition = new HashMap<>();
-    private final Map<Class<?>, Object> singleObjects = new HashMap<>();
+    private final Map<Class<?>, BeanDefinition> beanDefinitions = new HashMap<>();
+
+    private final DefaultSingletonBeanRegistry singletonBeanRegistry = new DefaultSingletonBeanRegistry();
+
+    private final ThreadLocal<Set<Class<?>>> singletonsCurrentlyInCreation = ThreadLocal.withInitial(HashSet::new);
 
     public void registerBeanDefinition(Class<?> type, BeanDefinition definition) {
-        beanDefinition.put(type, definition);
+        beanDefinitions.put(type, definition);
     }
     @Override
     public <T> T getBean(Class<T> type) {
-        if (singleObjects.containsKey(type)) {
-            return type.cast(singleObjects.get(type));
+        BeanDefinition bd = beanDefinitions.get(type);
+        if (Objects.isNull(bd)) {
+            throw new RuntimeException("No Bean Definition for "+type.getName());
         }
-        BeanDefinition bd = beanDefinition.get(type);
-        if (Objects.isNull(bd)){
-            throw new RuntimeException("No bean definition for " + type.getName());
-        }
-        Object bean = createBean(type, bd);
         if (bd.isSingleton()){
-            singleObjects.put(type, bean);
+            Object singleton = singletonBeanRegistry.getOrCreateSingleton(type, ()->createSingletonBean(type,bd));
+
+            return type.cast(singleton);
         }
-        return type.cast(bean);
+
+        return type.cast(createBean(bd));
     }
 
-    private Object createBean(Class<?> type, BeanDefinition bd) {
-        try{
-            Constructor<?> constructor = type.getDeclaredConstructor();
-            return constructor.newInstance();
-        }catch (Exception e) {
-            throw new RuntimeException("Failed to create bean " + type.getName(), e);
+    private Object createSingletonBean(Class<?> beanClass, BeanDefinition bd){
+        beforeSingletonCreation(beanClass);
+        try {
+            return createBean(bd);
+        }finally {
+            afterSingletonCreation(beanClass);
         }
+    }
+
+    private Object createBean(BeanDefinition bd) {
+        try{
+            Class<?> clazz = bd.getBeanClass();
+            Constructor<?> constructor = resolveConstructor(clazz);
+            Object[] args = Arrays.stream(constructor.getParameterTypes())
+                    .map(this::getBean)
+                    .toArray();
+            Object bean = constructor.newInstance(args);
+            injectFields(bean, clazz);
+            return bean;
+        }catch (Exception e) {
+            throw new RuntimeException("Failed to create bean " + bd.getBeanClass().getName(), e);
+        }
+    }
+
+    private Constructor<?> resolveConstructor(Class<?> clazz) {
+        Constructor<?> [] constructors = clazz.getConstructors();
+        if (constructors.length == 0){
+            throw new RuntimeException("No public constructor found for " + clazz.getName());
+        }
+        return constructors[0];
+    }
+
+    private void injectFields(Object bean,Class<?> clazz) throws  IllegalAccessException {
+        for (Field field : clazz.getDeclaredFields()) {
+            if (field.isAnnotationPresent(Autowired.class)){
+                field.setAccessible(true);
+                Object dependency = getBean(field.getType());
+                field.set(bean,dependency);
+            }
+        }
+
+    }
+
+    private void beforeSingletonCreation(Class<?> beanClass){
+        Set<Class<?>> creating = singletonsCurrentlyInCreation.get();
+        if (!creating.add(beanClass)){
+            throw new RuntimeException(
+                    "Circular dependency detected while creating singleton bean: "
+                            + beanClass.getName()
+            );
+        }
+    }
+    private void afterSingletonCreation(Class<?> beanClass) {
+        singletonsCurrentlyInCreation.get().remove(beanClass);
     }
 }

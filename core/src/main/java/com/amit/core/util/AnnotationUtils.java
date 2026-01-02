@@ -1,4 +1,4 @@
-package com.ami.core.util;
+package com.amit.core.util;
 
 public class AnnotationUtils {
 }

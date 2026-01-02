@@ -1,4 +1,4 @@
-package com.ami.core.scanner;
+package com.amit.core.scanner;
 
 import java.util.Set;
 

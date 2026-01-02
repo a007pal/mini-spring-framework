@@ -13,6 +13,7 @@
         <module>beans</module>
         <module>context</module>
         <module>commons</module>
+        <module>example</module>
     </modules>
 
     <properties>
