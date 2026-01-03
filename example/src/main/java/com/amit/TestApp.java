@@ -1,5 +1,6 @@
 package com.amit;
 
+import com.amit.bean.processor.LoggingBeanPostProcessor;
 import com.amit.beans.definition.BeanDefinition;
 import com.amit.beans.factory.support.DefaultBeanFactory;
 import com.amit.constant.BeanType;
@@ -18,6 +19,7 @@ public class TestApp {
                 new BeanDefinition(UserRepository.class, BeanType.SINGLETON));
         factory.registerBeanDefinition(UserService.class,
                 new BeanDefinition(UserService.class, BeanType.SINGLETON));
+        factory.addBeanPostProcessor(new LoggingBeanPostProcessor());
 
         factory.registerBeanDefinition(A.class,
                 new BeanDefinition(A.class, BeanType.SINGLETON));

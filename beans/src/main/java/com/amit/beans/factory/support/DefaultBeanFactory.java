@@ -1,12 +1,16 @@
 package com.amit.beans.factory.support;
 
+import com.amit.beans.factory.BeanPostProcessor;
 import com.amit.core.annotation.Autowired;
 import com.amit.beans.definition.BeanDefinition;
 import com.amit.beans.factory.BeanFactory;
 import com.amit.beans.singleton.DefaultSingletonBeanRegistry;
+import com.amit.core.annotation.PostConstruct;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.*;
 
 
@@ -17,6 +21,8 @@ public class DefaultBeanFactory implements BeanFactory {
     private final DefaultSingletonBeanRegistry singletonBeanRegistry = new DefaultSingletonBeanRegistry();
 
     private final ThreadLocal<Set<Class<?>>> singletonsCurrentlyInCreation = ThreadLocal.withInitial(HashSet::new);
+
+    private final List<BeanPostProcessor> beanPostProcessors = new ArrayList<>();
 
     public void registerBeanDefinition(Class<?> type, BeanDefinition definition) {
         beanDefinitions.put(type, definition);
@@ -31,9 +37,15 @@ public class DefaultBeanFactory implements BeanFactory {
             Object singleton = singletonBeanRegistry.getOrCreateSingleton(type, ()->createSingletonBean(type,bd));
 
             return type.cast(singleton);
+        }else {
+            return type.cast(createBean(bd));
         }
 
-        return type.cast(createBean(bd));
+
+    }
+
+    public void addBeanPostProcessor(BeanPostProcessor bpp){
+        this.beanPostProcessors.add(bpp);
     }
 
     private Object createSingletonBean(Class<?> beanClass, BeanDefinition bd){
@@ -47,28 +59,27 @@ public class DefaultBeanFactory implements BeanFactory {
 
     private Object createBean(BeanDefinition bd) {
         try{
-            Class<?> clazz = bd.getBeanClass();
-            Constructor<?> constructor = resolveConstructor(clazz);
-            Object[] args = Arrays.stream(constructor.getParameterTypes())
-                    .map(this::getBean)
-                    .toArray();
-            Object bean = constructor.newInstance(args);
-            injectFields(bean, clazz);
+           Object bean = instantiateBean(bd);
+           populateProperties(bean, bd);
+           bean = initializeBean(bean, bd);
             return bean;
         }catch (Exception e) {
             throw new RuntimeException("Failed to create bean " + bd.getBeanClass().getName(), e);
         }
     }
 
-    private Constructor<?> resolveConstructor(Class<?> clazz) {
-        Constructor<?> [] constructors = clazz.getConstructors();
-        if (constructors.length == 0){
-            throw new RuntimeException("No public constructor found for " + clazz.getName());
-        }
-        return constructors[0];
+
+    private Object instantiateBean(BeanDefinition bd) throws Exception{
+        Class<?> clazz = bd.getBeanClass();
+        Constructor<?> constructor = resolveConstructor(clazz);
+        Object[] args = Arrays.stream(constructor.getParameterTypes())
+                .map(this::getBean)
+                .toArray();
+        return constructor.newInstance(args);
     }
 
-    private void injectFields(Object bean,Class<?> clazz) throws  IllegalAccessException {
+    private void populateProperties(Object bean,BeanDefinition bd) throws  IllegalAccessException {
+        Class<?> clazz = bean.getClass();
         for (Field field : clazz.getDeclaredFields()) {
             if (field.isAnnotationPresent(Autowired.class)){
                 field.setAccessible(true);
@@ -77,6 +88,20 @@ public class DefaultBeanFactory implements BeanFactory {
             }
         }
 
+    }
+    private  Object initializeBean(Object bean, BeanDefinition bd) {
+        invokePostConstruct(bean);
+        bean = applyBeanPostProcessorsBeforeInitialization(bean, bd.getBeanClass().getName());
+        bean = applyBeanPostProcessorsAfterInitialization(bean, bd.getBeanClass().getName());
+        return bean;
+
+    }
+    private Constructor<?> resolveConstructor(Class<?> clazz) {
+        Constructor<?> [] constructors = clazz.getConstructors();
+        if (constructors.length == 0){
+            throw new RuntimeException("No public constructor found for " + clazz.getName());
+        }
+        return constructors[0];
     }
 
     private void beforeSingletonCreation(Class<?> beanClass){
@@ -89,6 +114,45 @@ public class DefaultBeanFactory implements BeanFactory {
         }
     }
     private void afterSingletonCreation(Class<?> beanClass) {
-        singletonsCurrentlyInCreation.get().remove(beanClass);
+        Set<Class<?>> creating = singletonsCurrentlyInCreation.get();
+        if (Objects.nonNull(creating)){
+            creating.remove(beanClass);
+        }
+
+    }
+
+    private void invokePostConstruct(Object bean) {
+        Class<?> clazz = bean.getClass();
+        for (Method method : clazz.getDeclaredMethods()){
+            if (method.isAnnotationPresent(PostConstruct.class)){
+                if(method.getParameterCount()!=0){
+                    throw new RuntimeException("@PostConstruct method must have no arguments: "
+                            + method.getName());
+                }
+                try {
+                    method.setAccessible(true);
+                    method.invoke(bean);
+                } catch (Exception e) {
+                    throw new RuntimeException("Failed to invoke @PostConstruct method: "
+                            + method.getName(),e);
+                }
+            }
+        }
+    }
+
+    private Object applyBeanPostProcessorsBeforeInitialization(Object bean, String beanName){
+        Object result = bean;
+        for (BeanPostProcessor bpp : beanPostProcessors){
+            result = bpp.postProcessBeforeInitialization(result, beanName);
+        }
+        return result;
+    }
+
+    private Object applyBeanPostProcessorsAfterInitialization(Object bean, String beanName){
+        Object result = bean;
+        for (BeanPostProcessor bpp : beanPostProcessors){
+            result = bpp.postProcessAfterInitialization(result, beanName);
+        }
+        return result;
     }
 }
